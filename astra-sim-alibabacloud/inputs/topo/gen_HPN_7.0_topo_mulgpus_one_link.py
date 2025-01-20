@@ -98,7 +98,9 @@ def gen_HPN_7_0_multi_plane(args):
         segment_num = (int)(args.gpu / (nodes_per_asw * int(asw_switch_num_per/2)))
     else:
         segment_num = (int)(args.gpu / (nodes_per_asw * int(asw_switch_num_per/2)))+1
-        
+
+    segment_size = (nodes_per_asw * int(asw_switch_num_per/2))
+
     if(segment_num != args.asw_switch_num / asw_switch_num_per):
         raise ValueError("Error relations between total GPU Nums and total aws_switch_num")
     nv_switch_num = (int)(args.gpu / args.gpu_per_server) * args.nv_switch_per_server
@@ -138,7 +140,19 @@ def gen_HPN_7_0_multi_plane(args):
                 psw_switch_2.append(i)
         f.write(sec_line)
         f.write('\n')
-        
+
+        print(f"GPUs: {args.gpu}")
+        print(f"segments: {segment_num}")
+        print(f"GPUs per segment: {segment_size}")
+
+        print(f"NV switches: {nv_switch}")
+        print(f"ASWs for plane 1: {asw_switch_1}")
+        print(f"ASWs for plane 2: {asw_switch_2}")
+        print(f"PSWs for plane 1: {psw_switch_1}")
+        print(f"PSWs for plane 2: {psw_switch_2}")
+
+        asw_gpus = {k: [] for k in asw_switch_1 + asw_switch_2}
+
         ind_asw1 = 0
         ind_asw2 = 0
         curr_node = 0
@@ -160,13 +174,19 @@ def gen_HPN_7_0_multi_plane(args):
                 f.write(line)
                 f.write('\n')
 
-            line = str(i)+" "+str(asw_switch_1[group_num*asws_per_node+ind_asw1])+" "+args.bandwidth+" "+args.latency+" "+args.error_rate
+            segment = int(i / segment_size)
+
+            asw_1_idx = segment*int(len(asw_switch_1)/segment_num)+group_num*asws_per_node+ind_asw1
+            line = str(i)+" "+str(asw_switch_1[asw_1_idx])+" "+args.bandwidth+" "+args.latency+" "+args.error_rate
             f.write(line)
             f.write('\n')
-            
-            line = str(i)+" "+str(asw_switch_2[group_num*asws_per_node+ind_asw2])+" "+args.bandwidth+" "+args.latency+" "+args.error_rate
+            asw_gpus[asw_switch_1[asw_1_idx]].append(i)
+
+            asw_2_idx = segment*int(len(asw_switch_1)/segment_num)+group_num*asws_per_node+ind_asw2
+            line = str(i)+" "+str(asw_switch_2[asw_2_idx])+" "+args.bandwidth+" "+args.latency+" "+args.error_rate
             f.write(line)
             f.write('\n')
+            asw_gpus[asw_switch_2[asw_2_idx]].append(i)
 
             ind_asw1 = ind_asw1 + 1
             if ind_asw1 == asws_per_node:
@@ -182,6 +202,10 @@ def gen_HPN_7_0_multi_plane(args):
                 group_account = 0
 
             a_s_cnt += 2
+
+        for asw, gpus in asw_gpus.items():
+            print(f"GPUs on ASW {asw}: {gpus}")
+
         a_p_cnt = 0
         # double logical plane
         for i in asw_switch_1: # asw - psw

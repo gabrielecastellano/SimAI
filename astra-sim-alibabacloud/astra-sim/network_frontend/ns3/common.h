@@ -240,6 +240,7 @@ void schedule_monitor(){
 }
 
 void CalculateRoute(Ptr<Node> host) {
+  //printf(" - CalculateRoute for node %u...\n", host->GetId());
   vector<Ptr<Node>> q;
   map<Ptr<Node>, int> dis;
   map<Ptr<Node>, uint64_t> delay;
@@ -252,6 +253,7 @@ void CalculateRoute(Ptr<Node> host) {
   bw[host] = 0xfffffffffffffffflu;
   for (int i = 0; i < (int)q.size(); i++) {
     Ptr<Node> now = q[i];
+    //printf(" -- current node %u\n", now->GetId());
     int d = dis[now];
     for (auto it = nbr2if[now].begin(); it != nbr2if[now].end(); it++) {
       if (!it->second.up)
@@ -263,6 +265,9 @@ void CalculateRoute(Ptr<Node> host) {
         txDelay[next] = txDelay[now] +
                         packet_payload_size * 1000000000lu * 8 / it->second.bw;
         bw[next] = std::min(bw[now], it->second.bw);
+        //printf(" --- txDelay to %u is %llu\n", next->GetId(), txDelay[next]);
+        //printf(" --- delay to %u is %llu\n", next->GetId(), delay[next]);
+        //printf(" --- bw to %u is %llu\n", next->GetId(), bw[next]);
         if (next->GetNodeType() == 1 || next->GetNodeType() == 2) {
           q.push_back(next);
         }
@@ -950,6 +955,7 @@ void SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>),void (*send_fini
   CalculateRoutes(n);
   SetRoutingEntries();
 
+  //printf(" - Routes:\n");
   maxRtt = maxBdp = 0;
   for (uint32_t i = 0; i < node_num; i++) {
     if (n.Get(i)->GetNodeType() != 0)
@@ -964,6 +970,10 @@ void SetupNetwork(void (*qp_finish)(FILE *, Ptr<RdmaQueuePair>),void (*send_fini
       uint64_t bdp = rtt * bw / 1000000000 / 8;
       pairBdp[n.Get(i)][n.Get(j)] = bdp;
       pairRtt[i][j] = rtt;
+      //printf(" -- %u -> %u\n", i, j);
+      //printf(" --- txDelay %u->%u is %llu\n", i, j, txDelay);
+      //printf(" --- delay %u->%u is %llu\n", i, j, delay);
+      //printf(" --- bw %u->%u is %llu\n", i, j, bw);
       if (bdp > maxBdp)
         maxBdp = bdp;
       if (rtt > maxRtt)
