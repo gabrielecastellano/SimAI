@@ -104,12 +104,12 @@ public:
     Simulator::Schedule(NanoSeconds(t.schTime), t.msg_handler, t.fun_arg);
     return;
   }
-  virtual int sim_send(void *buffer,   
-                       uint64_t count, 
-                       int type,       
+  virtual int sim_send(void *buffer,
+                       uint64_t count,
+                       int type,
                        int dst,
-                       int tag,                       
-                       AstraSim::sim_request *request, 
+                       int tag,
+                       AstraSim::sim_request *request,
                        void (*msg_handler)(void *fun_arg), void *fun_arg) {
     dst += npu_offset;
     task1 t;
@@ -151,7 +151,7 @@ public:
     AstraSim::EventType event = ehd->event;
     tag = ehd->flowTag.tag_id;
     NcclLog->writeLog(NcclLogLevel::DEBUG,"接收事件注册 src %d sim_recv on rank %d tag_id %d channdl id %d",src,rank,tag,ehd->flowTag.channel_id);
-    
+
     if (recvHash.find(make_pair(tag, make_pair(t.src, t.dest))) !=
         recvHash.end()) {
       uint64_t count = recvHash[make_pair(tag, make_pair(t.src, t.dest))];
@@ -162,7 +162,7 @@ public:
           AstraSim::ncclFlowTag pending_tag = receiver_pending_queue[std::make_pair(std::make_pair(rank, src),tag)];
           receiver_pending_queue.erase(std::make_pair(std::make_pair(rank,src),tag));
           ehd->flowTag = pending_tag;
-        } 
+        }
         #ifdef NS3_MTP
         cs.ExitSection();
         #endif
@@ -175,7 +175,7 @@ public:
           AstraSim::ncclFlowTag pending_tag = receiver_pending_queue[std::make_pair(std::make_pair(rank, src),tag)];
           receiver_pending_queue.erase(std::make_pair(std::make_pair(rank,src),tag));
           ehd->flowTag = pending_tag;
-        } 
+        }
         #ifdef NS3_MTP
         cs.ExitSection();
         #endif
@@ -191,19 +191,19 @@ public:
           expeRecvHash.end()) {
         expeRecvHash[make_pair(tag, make_pair(t.src, t.dest))] = t;
           NcclLog->writeLog(NcclLogLevel::DEBUG," 网络包后到，先进行注册 recvHash do not find expeRecvHash.new make src  %d dest  %d t.count:  %d channel_id  %d current_flow_id  %d",t.src,t.dest,t.count,tag,flowTag.current_flow_id);
-          
+
       } else {
         uint64_t expecount =
             expeRecvHash[make_pair(tag, make_pair(t.src, t.dest))].count;
           NcclLog->writeLog(NcclLogLevel::DEBUG," 网络包后到，重复注册 recvHash do not find expeRecvHash.add make src  %d dest  %d expecount:  %d t.count:  %d tag_id  %d current_flow_id  %d",t.src,t.dest,expecount,t.count,tag,flowTag.current_flow_id);
-          
+
       }
     }
     #ifdef NS3_MTP
     cs.ExitSection();
     #endif
 
-sim_recv_end_section:    
+sim_recv_end_section:
     return 0;
   }
   void handleEvent(int dst, int cnt) {
@@ -215,18 +215,20 @@ struct user_param {
   string workload;
   string network_topo;
   string network_conf;
+  string run_name;
   user_param() {
     thread = 1;
     workload = "";
     network_topo = "";
     network_conf = "";
+    run_name = "";
   };
   ~user_param(){};
 };
 
 static int user_param_prase(int argc,char * argv[],struct user_param* user_param){
   int opt;
-  while ((opt = getopt(argc,argv,"ht:w:g:s:n:c:"))!=-1){
+  while ((opt = getopt(argc,argv,"ht:w:g:s:n:r:c:"))!=-1){
     switch (opt)
     {
     case 'h':
@@ -234,7 +236,8 @@ static int user_param_prase(int argc,char * argv[],struct user_param* user_param
       std::cout<<"-t    number of threads,default 1"<<std::endl;
       std::cout<<"-w    workloads default none "<<std::endl;
       std::cout<<"-n    network topo"<<std::endl;
-      std::cout<<"-c    network_conf"<<std::endl;
+      std::cout<<"-c    network conf"<<std::endl;
+      std::cout<<"-r    run name"<<std::endl;
       return 1;
       break;
     case 't':
@@ -248,6 +251,9 @@ static int user_param_prase(int argc,char * argv[],struct user_param* user_param
       break;
     case 'c':
       user_param->network_conf = optarg;
+      break;
+    case 'r':
+      user_param->run_name = optarg;
       break;
     default:
       std::cerr<<"-h    help message"<<std::endl;
@@ -268,19 +274,19 @@ int main(int argc, char *argv[]) {
   #ifdef NS3_MTP
   MtpInterface::Enable(user_param.thread);
   #endif
-  
-  main1(user_param.network_topo,user_param.network_conf);
+
+  main1(user_param.network_topo, user_param.network_conf, user_param.run_name);
   int nodes_num = node_num - switch_num;
   int gpu_num = node_num - nvswitch_num - switch_num;
 
-  std::map<int, int> node2nvswitch; 
+  std::map<int, int> node2nvswitch;
   for(int i = 0; i < gpu_num; ++ i) {
     node2nvswitch[i] = gpu_num + i / gpus_per_server;
   }
-  for(int i = gpu_num; i < gpu_num + nvswitch_num; ++ i){
+  for(int i = gpu_num; i < gpu_num + (int) nvswitch_num; ++ i){
     node2nvswitch[i] = i;
     NVswitchs.push_back(i);
-  } 
+  }
 
   LogComponentEnable("OnOffApplication", LOG_LEVEL_INFO);
   LogComponentEnable("PacketSink", LOG_LEVEL_INFO);
@@ -290,31 +296,30 @@ int main(int argc, char *argv[]) {
   std::vector<AstraSim::Sys *> systems(nodes_num, nullptr);
 
   for (int j = 0; j < nodes_num; j++) {
-    networks[j] =
-        new ASTRASimNetwork(j ,0);
-    systems[j ] = new AstraSim::Sys(
-        networks[j], 
-        nullptr,                  
-        j,                        
-        0,               
-        1,                        
-        {nodes_num},        
-        {1},          
-        "", 
-        user_param.workload, 
-        1, 
-        1,          
-        1,          
-        1,
-        0,                 
-        RESULT_PATH, 
-        "test1",            
-        true,               
-        false,               
-        gpu_type,
-        {gpu_num},
-        NVswitchs,
-        gpus_per_server
+    networks[j] = new ASTRASimNetwork(j ,0);
+    systems[j] = new AstraSim::Sys(
+      networks[j],
+      nullptr,
+      j,
+      0,
+      1,
+      {nodes_num},
+      {1},
+      "",
+      user_param.workload,
+      1,
+      1,
+      1,
+      1,
+      0,
+      RESULT_PATH,
+      user_param.run_name,
+      true,
+      false,
+      gpu_type,
+      {gpu_num},
+      NVswitchs,
+      gpus_per_server
     );
     systems[j ]->nvswitch_id = node2nvswitch[j];
     systems[j ]->num_gpus = nodes_num - nvswitch_num;
