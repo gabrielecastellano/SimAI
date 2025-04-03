@@ -115,11 +115,13 @@ class Workload : Callable {
   CSVWriter* detailed;
   CSVWriter* end_to_end;
   CSVWriter* dimension_utilization;
+  CSVWriter* pass_state;
   std::string path;
   std::string run_name;
   int stat_row;
   int total_rows;
   bool registered_for_finished_streams;
+  void set_current_state(LoopState current_state);
 };
 } // namespace AstraSim
 #endif

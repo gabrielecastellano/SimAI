@@ -9,6 +9,28 @@ LICENSE file in the root directory of this source tree.
 #include "astra-sim/system/MockNcclLog.h"
 
 namespace AstraSim {
+
+bool isIntraNode(const std::vector<bool>& v) {
+    for (size_t i = 1; i < v.size(); ++i) {
+        if (v[i] != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+ostream& operator<<(ostream& lhs, const Workload::LoopState& rhs) {
+  switch(rhs) {
+    case Workload::LoopState::Forward_Pass:        lhs << "Forward_Pass";        break;
+    case Workload::LoopState::Weight_Gradient:     lhs << "Weight_Gradient";     break;
+    case Workload::LoopState::Input_Gradient:      lhs << "Input_Gradient";      break;
+    case Workload::LoopState::Wait_For_Sim_Finish: lhs << "Wait_For_Sim_Finish"; break;
+    case Workload::LoopState::Forward_In_BackPass: lhs << "Forward_In_BackPass"; break;
+    default: lhs << "Unknown";
+  }
+  return lhs;
+}
+
 Workload::~Workload() {
   if (end_to_end != nullptr) {
     delete end_to_end;
@@ -18,6 +40,9 @@ Workload::~Workload() {
   }
   if (dimension_utilization != nullptr) {
     delete dimension_utilization;
+  }
+  if (pass_state != nullptr) {
+    delete pass_state;
   }
   for (int i = 0; i < SIZE; i++) {
     delete layers[i];
@@ -42,7 +67,6 @@ Workload::Workload(
   this->delay_loaded = false;
   this->checkpoint_initiated = false;
   this->collective_issued = false;
-  this->current_state = LoopState::Forward_Pass;
   this->generator = generator;
   this->TOTAL_PASS = TOTAL_PASS;
   this->pass_counter = 0;
@@ -51,6 +75,7 @@ Workload::Workload(
   end_to_end = nullptr;
   detailed = nullptr;
   dimension_utilization = nullptr;
+  pass_state = nullptr;
   this->path = path;
   this->stat_row = stat_row;
   this->seprate_log = seprate_log;
@@ -61,28 +86,61 @@ Workload::Workload(
   this->total_rows = total_rows;
   this->run_name = run_name;
   this->registered_for_finished_streams = false;
+  pass_state = new CSVWriter(
+    path,
+    run_name + "_pass_state.csv"
+  );
   #ifndef PHY_MTP
   if (generator->id == 0 && seprate_log) {
-    std::cout << "stat path: " << path << " ,total rows: " << total_rows
-              << " ,stat row: " << stat_row << std::endl;
-    detailed = new CSVWriter(path, "detailed_"+std::to_string(generator->total_nodes)+".csv");
-    end_to_end = new CSVWriter(path, "EndToEnd.csv");
-    dimension_utilization =
-        new CSVWriter(path, run_name + "_dimension_utilization_"+std::to_string(generator->npu_offset)+".csv");
+    std::cout << "stat path: " << path
+              << " ,run name: " << run_name
+              << " ,total rows: " << total_rows
+              << " ,stat row: " << stat_row
+              << std::endl;
+    detailed = new CSVWriter(
+      path,
+      run_name + "_detailed_" + std::to_string(generator->total_nodes) + ".csv"
+    );
+    end_to_end = new CSVWriter(
+      path,
+      run_name + "_EndToEnd.csv"
+    );
+    dimension_utilization = new CSVWriter(
+      path,
+      run_name + "_dimension_utilization_" + std::to_string(generator->npu_offset) + ".csv"
+    );
     if (stat_row == 0) {
       initialize_stat_files();
     }
   }
   #endif
+  //this->set_current_state(LoopState::Forward_Pass);
+  this->current_state = LoopState::Forward_Pass;
 }
+
+void Workload::set_current_state(const LoopState current_state) {
+  this->current_state = current_state;
+  if (pass_state != nullptr) {
+    std::ostringstream oss;
+    oss << Sys::boostedTick() << ","
+        << pass_counter << ","
+        << layers[index]->layer_num << ","
+        << layers[index]->id << ","
+        << current_state << ","
+        << generator->id;
+    pass_state->write_line(oss.str());
+  }
+}
+
 void Workload::initialize_stat_files() {
   #ifdef NS3_MPI
   detailed->initialize_csv(SIZE * total_rows + 20, 50);
   #endif
-  #ifdef NS3_MTP 
+  #ifdef NS3_MTP
   detailed->initialize_csv(SIZE * total_rows + 20, 50);
   #endif
   end_to_end->initialize_csv(SIZE * total_rows + 20, 50);
+  pass_state->initialize_csv(SIZE * total_rows + 20, 3);
 }
 void Workload::call(EventType event, CallData* data) {
   if (counter > 0) {
@@ -185,7 +243,7 @@ void Workload::report() {
   std::cout << "all passes finished at time: " << Sys::boostedTick()
             << ", id of first layer: " << layers[0]->id << std::endl;
   generator->NI->pass_front_end_report(astraSimDataAPI);
-  #ifdef NS3_MTP 
+  #ifdef NS3_MTP
   if (this->seprate_log) {
     std::list<std::list<std::pair<uint64_t, double>>> dims;
     for (int i = 0; i < generator->scheduler_unit->usage.size(); i++) {
@@ -195,7 +253,7 @@ void Workload::report() {
     dimension_utilization->finalize_csv(dims);
   }
   #endif
-  #ifdef NS3_MPI 
+  #ifdef NS3_MPI
   if (this->seprate_log) {
     std::list<std::list<std::pair<uint64_t, double>>> dims;
     for (int i = 0; i < generator->scheduler_unit->usage.size(); i++) {
@@ -208,7 +266,7 @@ void Workload::report() {
 }
 void Workload::check_for_sim_end() {
   if (pass_counter == TOTAL_PASS) {
-    current_state = LoopState::Wait_For_Sim_Finish;
+    this->set_current_state(LoopState::Wait_For_Sim_Finish);
     if (generator->streams_finished != generator->streams_injected &&
         registered_for_finished_streams == false) {
       generator->register_for_finished_stream(this);
@@ -259,8 +317,8 @@ void Workload::iterate_data_parallel() {
     index++;
     delay_loaded = false;
     if (index >= SIZE) {
-      current_state = LoopState::Weight_Gradient;
       index--;
+      this->set_current_state(LoopState::Weight_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -283,9 +341,9 @@ void Workload::iterate_data_parallel() {
                   << " finished at time: " << Sys::boostedTick() << std::endl;
       }
       pass_counter++;
-      current_state = LoopState::Forward_Pass;
+      this->set_current_state(LoopState::Forward_Pass);
     } else {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -301,7 +359,7 @@ void Workload::iterate_data_parallel() {
     }
     delay_loaded = false;
     index--;
-    current_state = LoopState::Weight_Gradient;
+    this->set_current_state(LoopState::Weight_Gradient);
     generator->register_event(this, EventType::General, NULL, 1);
     return;
   }
@@ -333,8 +391,8 @@ void Workload::iterate_hybrid_parallel_customized() {
     delay_loaded = false;
     collective_issued = false;
     if (index >= SIZE) {
-      current_state = LoopState::Input_Gradient;
       index--;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -368,9 +426,9 @@ void Workload::iterate_hybrid_parallel_customized() {
                   << " finished at time: " << Sys::boostedTick() << std::endl;
       }
       pass_counter++;
-      current_state = LoopState::Forward_Pass;
+      this->set_current_state(LoopState::Forward_Pass);
     } else {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -391,7 +449,7 @@ void Workload::iterate_hybrid_parallel_customized() {
     }
     collective_issued = false;
     delay_loaded = false;
-    current_state = LoopState::Weight_Gradient;
+    this->set_current_state(LoopState::Weight_Gradient);
     generator->register_event(this, EventType::General, NULL, 1);
     return;
   }
@@ -423,8 +481,8 @@ void Workload::iterate_hybrid_parallel_data_model() {
     delay_loaded = false;
     collective_issued = false;
     if (index >= SIZE) {
-      current_state = LoopState::Input_Gradient;
       index--;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -458,9 +516,9 @@ void Workload::iterate_hybrid_parallel_data_model() {
                   << " finished at time: " << Sys::boostedTick() << std::endl;
       }
       pass_counter++;
-      current_state = LoopState::Forward_Pass;
+      this->set_current_state(LoopState::Forward_Pass);
     } else {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -481,7 +539,7 @@ void Workload::iterate_hybrid_parallel_data_model() {
     }
     collective_issued = false;
     delay_loaded = false;
-    current_state = LoopState::Weight_Gradient;
+    this->set_current_state(LoopState::Weight_Gradient);
     generator->register_event(this, EventType::General, NULL, 1);
     return;
   }
@@ -513,8 +571,8 @@ void Workload::iterate_hybrid_parallel_model_data() {
     delay_loaded = false;
     collective_issued = false;
     if (index >= SIZE) {
-      current_state = LoopState::Input_Gradient;
       index--;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -548,9 +606,9 @@ void Workload::iterate_hybrid_parallel_model_data() {
                   << " finished at time: " << Sys::boostedTick() << std::endl;
       }
       pass_counter++;
-      current_state = LoopState::Forward_Pass;
+      this->set_current_state(LoopState::Forward_Pass);
     } else {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -571,7 +629,7 @@ void Workload::iterate_hybrid_parallel_model_data() {
     }
     collective_issued = false;
     delay_loaded = false;
-    current_state = LoopState::Weight_Gradient;
+    this->set_current_state(LoopState::Weight_Gradient);
     generator->register_event(this, EventType::General, NULL, 1);
     return;
   }
@@ -638,8 +696,8 @@ void Workload::iterate_model_parallel() {
     delay_loaded = false;
     collective_issued = false;
     if (index >= SIZE) {
-      current_state = LoopState::Input_Gradient;
       index--;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -668,9 +726,9 @@ void Workload::iterate_model_parallel() {
                   << " finished at time: " << Sys::boostedTick() << std::endl;
       }
       pass_counter++;
-      current_state = LoopState::Forward_Pass;
+      this->set_current_state(LoopState::Forward_Pass);
     } else {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -692,7 +750,7 @@ void Workload::iterate_model_parallel() {
     }
     collective_issued = false;
     delay_loaded = false;
-    current_state = LoopState::Weight_Gradient;
+    this->set_current_state(LoopState::Weight_Gradient);
     generator->register_event(this, EventType::General, NULL, 1);
     return;
   }
@@ -724,8 +782,8 @@ void Workload::iterate_hybrid_parallel_Transformer() {
     delay_loaded = false;
     collective_issued = false;
     if (index >= SIZE) {
-      current_state = LoopState::Input_Gradient;
       index--;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -759,9 +817,9 @@ void Workload::iterate_hybrid_parallel_Transformer() {
                   << " finished at time: " << Sys::boostedTick() << std::endl;
       }
       pass_counter++;
-      current_state = LoopState::Forward_Pass;
+      this->set_current_state(LoopState::Forward_Pass);
     } else {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -783,11 +841,12 @@ void Workload::iterate_hybrid_parallel_Transformer() {
     }
     collective_issued = false;
     delay_loaded = false;
-    current_state = LoopState::Weight_Gradient;
+    this->set_current_state(LoopState::Weight_Gradient);
     generator->register_event(this, EventType::General, NULL, 1);
     return;
   }
 }
+
 void Workload::iterate_hybrid_parallel_Transformer_fwd_in_bckwd() {
   MockNcclLog* NcclLog = MockNcclLog::getInstance();
   assert(index >= 0);
@@ -819,8 +878,8 @@ void Workload::iterate_hybrid_parallel_Transformer_fwd_in_bckwd() {
     delay_loaded = false;
     collective_issued = false;
     if (index >= SIZE) {
-      current_state = LoopState::Input_Gradient;
       index--;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     NcclLog->writeLog(NcclLogLevel::DEBUG,"workload::call fwd_pass register_event EventType::General ");
     generator->register_event(this, EventType::General, NULL, 1);
@@ -855,9 +914,9 @@ void Workload::iterate_hybrid_parallel_Transformer_fwd_in_bckwd() {
                   << " finished at time: " << Sys::boostedTick() << std::endl;
       }
       pass_counter++;
-      current_state = LoopState::Forward_Pass;
+      this->set_current_state(LoopState::Forward_Pass);
     } else {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -867,7 +926,7 @@ void Workload::iterate_hybrid_parallel_Transformer_fwd_in_bckwd() {
       while (!layers[index--]->is_checkpoint)
         ;
       index++;
-      current_state = LoopState::Forward_In_BackPass;
+      this->set_current_state(LoopState::Forward_In_BackPass);
       checkpoint_initiated = true;
       generator->register_event(this, EventType::General, NULL, 1);
       if (generator->id == 0) {
@@ -895,7 +954,7 @@ void Workload::iterate_hybrid_parallel_Transformer_fwd_in_bckwd() {
     checkpoint_initiated = false;
     collective_issued = false;
     delay_loaded = false;
-    current_state = LoopState::Weight_Gradient;
+    this->set_current_state(LoopState::Weight_Gradient);
     generator->register_event(this, EventType::General, NULL, 1);
     return;
   } else if (current_state == LoopState::Forward_In_BackPass) {
@@ -921,7 +980,7 @@ void Workload::iterate_hybrid_parallel_Transformer_fwd_in_bckwd() {
     delay_loaded = false;
     collective_issued = false;
     if (layers[index]->needs_fwd_in_bckwd_initiation) {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     generator->register_event(this, EventType::General, NULL, 1);
     return;
@@ -959,8 +1018,8 @@ void Workload::iterate_hybrid_parallel_DLRM() {
     delay_loaded = false;
     collective_issued = false;
     if (index >= SIZE) {
-      current_state = LoopState::Weight_Gradient;
       index--;
+      this->set_current_state(LoopState::Weight_Gradient);
     }
     if (generator->id == 0) {
       std::cout << "*************************layer changed to: " << index
@@ -993,9 +1052,9 @@ void Workload::iterate_hybrid_parallel_DLRM() {
                   << " finished at time: " << Sys::boostedTick() << std::endl;
       }
       pass_counter++;
-      current_state = LoopState::Forward_Pass;
+      this->set_current_state(LoopState::Forward_Pass);
     } else {
-      current_state = LoopState::Input_Gradient;
+      this->set_current_state(LoopState::Input_Gradient);
     }
     delay_loaded = false;
     collective_issued = false;
@@ -1019,13 +1078,13 @@ void Workload::iterate_hybrid_parallel_DLRM() {
       std::cout << "*************************layer changed to: " << index
                 << " in ig" << std::endl;
     }
-    current_state = LoopState::Weight_Gradient;
+    this->set_current_state(LoopState::Weight_Gradient);
     collective_issued = false;
     delay_loaded = false;
     generator->register_event(this, EventType::General, NULL, 1);
   }
 }
-int Workload::get_layer_numbers(std::string workload_input) {
+  int Workload::get_layer_numbers(std::string workload_input) {
   std::ifstream inFile;
   inFile.open("workload_inputs/" + workload_input);
   if (!inFile) {
@@ -1156,7 +1215,7 @@ bool Workload::initialize_workload(std::string name) {
   std:string token;
   std::vector<std::string> tokens;
   // bool findparallesimPolcy = false;
-  
+
   while (iss >> token) {
         tokens.push_back(token);
         // std::cout << "Token is : '" << token << "'" << std::endl;
@@ -1205,7 +1264,7 @@ bool Workload::initialize_workload(std::string name) {
                 }
                 j++;
               }
-                
+
             }else if(tokens[i]=="checkpoint_initiates:"){
                 if (generator->id == 0) {
                   std::cout << std::endl;
@@ -1262,11 +1321,11 @@ bool Workload::initialize_workload(std::string name) {
       std::cout <<"pp_commize:"<< pp_commsize << std::endl;
   }
   if(generator->id == 0){
-    if (model_parallel_npu_group == 0 || expert_parallel_npu_group == 0 || pipeline_model_parallelism == 0 
+    if (model_parallel_npu_group == 0 || expert_parallel_npu_group == 0 || pipeline_model_parallelism == 0
         || vpp==0 || GA == 0 || all_gpus == 0 ||(pipeline_model_parallelism !=1 && pp_commsize ==0)||(pipeline_model_parallelism == 1 && pp_commsize !=0)){
           std::cerr << "*****Warining: Input workload format mismatch. It may cause simulation error. Pleased use the latest AICB to generate.*****" << std::endl;
       }
-  }        
+  }
   run_type = tokens[0];
   std::string secondline;
   std::getline(inFile,secondline);
@@ -1278,6 +1337,7 @@ bool Workload::initialize_workload(std::string name) {
 
   SIZE = lines;
   layers = new Layer*[SIZE];
+  //std::vector<Layer*> lv = {};
   for (int i = 0; i < lines; i++) {
     std::string id;
     inFile >> id;
@@ -1536,8 +1596,19 @@ bool Workload::initialize_workload(std::string name) {
         need_checkpoint_initiation.end()) {
       l->needs_fwd_in_bckwd_initiation = true;
     }
+    /*if ((fp_type == ComType::None || isIntraNode(selected_involved_dimensions["fwd"]))
+        && (ig_type == ComType::None || isIntraNode(selected_involved_dimensions["ig"]))
+        && (wg_type == ComType::None || isIntraNode(selected_involved_dimensions["wg"]))) {
+      SIZE -= 1;
+      continue;
+    }
+    lv.push_back(l);*/
     layers[i] = l;
   }
+  /*layers = new Layer*[SIZE];
+  for (int i = 0; i < SIZE; i++) {
+    layers[i] = lv[i];
+  }*/
   if (generator->id == 0) {
     std::cout << "type: " << run_type << " ,num passes: " << TOTAL_PASS
               << " ,lines: " << lines
