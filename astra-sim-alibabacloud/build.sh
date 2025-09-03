@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # Absolue path to this script
 SCRIPT_DIR=$(dirname "$(realpath $0)")
 NS3_BUILD_DIR="${SCRIPT_DIR:?}"/build/astra_ns3

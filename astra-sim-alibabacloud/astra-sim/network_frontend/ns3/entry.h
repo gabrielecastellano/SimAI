@@ -67,7 +67,7 @@ struct task1 {
 map<std::pair<int, std::pair<int, int>>, struct task1> expeRecvHash;
 map<std::pair<int, std::pair<int, int>>, uint64_t> recvHash;
 map<std::pair<int, std::pair<int, int>>, struct task1> sentHash;
-map<std::pair<int, int>, int64_t> nodeHash;
+map<std::pair<int, int>, uint64_t> nodeHash;
 map<std::pair<int,std::pair<int,int>>,int> waiting_to_sent_callback;  
 map<std::pair<int,std::pair<int,int>>,int>waiting_to_notify_receiver;
 map<std::pair<int,std::pair<int,int>>,uint64_t>received_chunksize;  
@@ -262,7 +262,7 @@ void notify_sender_sending_finished(int sender_node, int receiver_node,
         t2.msg_handler(t2.fun_arg);
         goto sender_end_1st_section;
       }else{
-        NcclLog->writeLog(NcclLogLevel::ERROR,"sentHash msg size != sender_node %d receiver_node %d message_size %lu flow_id ",sender_node,receiver_node,message_size);
+        NcclLog->writeLog(NcclLogLevel::ERROR,"sentHash msg size %lu != sender_node %d receiver_node %d message_size %lu flow_id ",t2.count,sender_node,receiver_node,message_size);
       }
     }else{
       NcclLog->writeLog(NcclLogLevel::ERROR,"sentHash cann't find sender_node %d receiver_node %d message_size %lu",sender_node,receiver_node,message_size);
@@ -299,7 +299,7 @@ void notify_sender_packet_arrivered_receiver(int sender_node, int receiver_node,
 void qp_finish(FILE *fout, Ptr<RdmaQueuePair> q) {
   uint32_t sid = ip_to_node_id(q->sip), did = ip_to_node_id(q->dip);
   uint64_t base_rtt = pairRtt[sid][did], b = pairBw[sid][did];
-  uint32_t total_bytes =
+  uint64_t total_bytes =
       q->m_size +
       ((q->m_size - 1) / packet_payload_size + 1) *
           (CustomHeader::GetStaticWholeHeaderSize() -

@@ -27,7 +27,7 @@ function cleanup {
     rm -rf "${BUILD_DIR}"
     rm -rf "${NS3_DIR}"/simulation/build
     rm -rf "${NS3_DIR}"/simulation/cmake-cache
-    rm -rf "${NS3_APPLICATION}"/astra-sim 
+    rm -rf "${NS3_APPLICATION}"/astra-sim
     cd "${SCRIPT_DIR:?}"
 }
 
@@ -49,12 +49,16 @@ function compile {
     # fi
     cp "${ASTRA_SIM_DIR}"/network_frontend/ns3/AstraSimNetwork.cc "${NS3_DIR}"/simulation/scratch/
     cp "${ASTRA_SIM_DIR}"/network_frontend/ns3/*.h "${NS3_DIR}"/simulation/scratch/
-    rm -rf "${NS3_APPLICATION}"/astra-sim 
+    rm -rf "${NS3_APPLICATION}"/astra-sim
     cp -r "${ASTRA_SIM_DIR}" "${NS3_APPLICATION}"/
     cd "${NS3_DIR}/simulation"
-    CC='gcc' CXX='g++' 
+    CC='gcc' CXX='g++'
     ./ns3 configure -d debug --enable-mtp
     ./ns3 build
+    #mkdir cmake-cache
+    #cd cmake-cache || exit
+    #cmake -DCMAKE_BUILD_TYPE=debug -DNS3_ASSERT=ON -DNS3_LOG=ON -DNS3_WARNINGS_AS_ERRORS=OFF -DNS3_NATIVE_OPTIMIZATIONS=OFF -DNS3_MTP=ON -G "Unix Makefiles" ..
+    #cmake --build . -j 103
 
     cd "${SCRIPT_DIR:?}"
 }
@@ -63,7 +67,7 @@ function debug {
     cp "${ASTRA_SIM_DIR}"/network_frontend/ns3/AstraSimNetwork.cc "${NS3_DIR}"/simulation/scratch/
     cp "${ASTRA_SIM_DIR}"/network_frontend/ns3/*.h "${NS3_DIR}"/simulation/scratch/
     cd "${NS3_DIR}/simulation"
-    CC='gcc-4.9' CXX='g++-4.9' 
+    CC='gcc-4.9' CXX='g++-4.9'
     ./waf configure
     ./waf --run 'scratch/AstraSimNetwork' --command-template="gdb --args %s mix/config.txt"
 
