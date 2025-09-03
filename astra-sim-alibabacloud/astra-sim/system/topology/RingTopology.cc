@@ -18,19 +18,23 @@ RingTopology::RingTopology(
   } else if (dimension == Dimension::Horizontal) {
     name = "horizontal";
   }
-  if (id == 0) {
-    std::cout << "ring of node 0, "
-              << "id: " << id << " dimension: " << name
-              << " total nodes in ring: " << total_nodes_in_ring
-              << " index in ring: " << index_in_ring << " offset: " << offset
-              << "total nodes in ring: " << total_nodes_in_ring << std::endl;
-  }
   this->id = id;
   this->total_nodes_in_ring = total_nodes_in_ring;
   this->index_in_ring = index_in_ring;
   this->offset = offset;
   this->dimension = dimension;
   find_neighbors();
+  if (id == 0) {
+    std::cout << "ring of node 0,"
+              << " id: " << id << " dimension: " << name
+              << " total nodes in ring: " << total_nodes_in_ring
+              << " index in ring: " << index_in_ring
+              << " offset: " << offset
+              << " total nodes in ring: " << total_nodes_in_ring
+              << " next node: " << this->next_node_id
+              << " previous node: " << this->previous_node_id
+              << std::endl;
+  }
   id_to_index[id] = index_in_ring;
 }
 void RingTopology::find_neighbors() {

@@ -23,6 +23,28 @@
 #include "astra-sim/system/MockNcclLog.h"
 using namespace std;
 namespace MockNccl {
+  std::string vectorToString(const std::vector<int>& vec) {
+    std::stringstream ss;
+    ss << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+      ss << vec[i];
+      if (i != vec.size() - 1) ss << ",";
+    }
+    ss << "]";
+    return ss.str();
+  }
+
+  std::string groupTypeToString(GroupType type) {
+    switch(type) {
+      case GroupType::DP: return "DP";
+      case GroupType::TP: return "TP";
+      case GroupType::EP: return "EP";
+      case GroupType::PP: return "PP";
+      case GroupType::DP_EP: return "DP_EP";
+      default: return "?";
+    }
+  }
+
   MockNcclGroup::MockNcclGroup(int _ngpus,int _gpus_per_nodes,int _TP_size,int _DP_size,int _PP_size,int _EP_size,int _DP_EP_size,std::vector<int>_NVSwitch,GPUType _gpu_type):g_flow_id(0),gpu_type(_gpu_type){
     /*init groups
     */
@@ -155,6 +177,15 @@ namespace MockNccl {
           }
         }
       }
+    }
+    for (const auto& [group_index, group_info] : AllGroups) {
+      std::cout << "Group#" << group_info.group_index
+                << " Type=" << groupTypeToString(group_info.type)
+                << " Nodes=" << group_info.nNodes
+                << " Ranks=" << group_info.nRanks
+                << " " << vectorToString(group_info.Ranks)
+                << " NVSwitches=" << vectorToString(group_info.NVSwitchs)
+                << "\n";
     }
     return;
   }
