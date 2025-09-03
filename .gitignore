@@ -1,4 +1,5 @@
 .vscode
+.idea
 astra-sim-alibabacloud/build/simai_analytical/build/
 astra-sim-alibabacloud/build/astra_ns3/build/
 astra-sim-alibabacloud/extern/
@@ -14,3 +15,4 @@ test/log/
 **/build
 **/cmake-cache
 !astra-sim-alibabacloud/build
+**/cmake-build*
